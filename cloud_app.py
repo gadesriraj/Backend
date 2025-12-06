@@ -1,9 +1,14 @@
+
 from fastapi import FastAPI
 from pydantic import BaseModel
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from datetime import datetime
+from tinydb import TinyDB
 
-app = FastAPI(title="Cloud Clinical Note API", version="1.0-lite")
+app = FastAPI(title="Cloud Clinical Note API", version="1.1-lite")
+
+# -------- Database (NEW) --------
+db = TinyDB("clinical_records.json")   # simple JSON DB on disk
 
 # -------- Dummy Pipeline --------
 class DummyPipeline:
@@ -21,7 +26,7 @@ class DummyPipeline:
             "optimized for low-memory cloud deployment."
         )
 
-        return {
+        result = {
             "patient_id": "DEMO-" + datetime.now().strftime("%Y%m%d%H%M%S"),
             "timestamp": datetime.now().isoformat(),
             "patient_data": data,
@@ -31,11 +36,12 @@ class DummyPipeline:
                     "code": "J18.9",
                     "description": "Pneumonia, unspecified organism",
                     "confidence": 0.80,
-                    "evidence": {"reason": "Symptoms suggest respiratory infection"}
+                    "evidence": {"reason": "Symptoms suggest respiratory infection"},
                 },
             },
-            "metadata": {"mode": "cloud-lite"}
+            "metadata": {"mode": "cloud-lite"},
         }
+        return result
 
 pipeline = DummyPipeline()
 
@@ -55,4 +61,21 @@ async def root():
 
 @app.post("/process_patient")
 async def process_patient(patient: Patient):
-    return pipeline.process_patient(patient.dict())
+    result = pipeline.process_patient(patient.dict())
+
+    # 🔥 SAVE to DB
+    db.insert({
+        "id": result["patient_id"],
+        "timestamp": result["timestamp"],
+        "patient": result["patient_data"],
+        "note": result["clinical_documentation"]["generated_note"],
+        "icd": result["clinical_documentation"]["icd_coding"],
+    })
+
+    return result
+
+# NEW: list all saved records
+@app.get("/records")
+async def get_records():
+    records = db.all()
+    return {"count": len(records), "records": records}
